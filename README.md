@@ -1,2 +1,22 @@
 # emoji-ranking
-ranks emoji usage in a discord server
+
+Discord 서버에서 이모지 사용량을 집계하는 간단한 파이썬 봇입니다. 반응(리액션)과 채팅 사용량을 모두 합산하여 한눈에 볼 수 있는 세로 막대 그래프를 제공합니다.
+
+## 사전 준비
+- Python 3.11+ 권장
+- Discord 봇 토큰 (`DISCORD_TOKEN` 환경 변수에 설정)
+- 의존성 설치: `pip install -r requirements.txt`
+
+## 실행 방법
+```bash
+export DISCORD_TOKEN="YOUR_TOKEN"
+python bot.py
+```
+
+## 사용법 (한국어 인터페이스)
+- `/emoji_rank 기간`: 상위 20개 이모지의 사용량을 세로 그래프로 표시합니다.
+  - 기간 옵션: `1주`, `1개월`, `3개월`, `전체` (기본값: `전체`)
+  - 그래프 하단 번호와 별도 전설(legend)로 이모지를 구분합니다. (커스텀 이모지는 코드 블록에서 렌더되지 않기 때문)
+- `/emoji_unused`: 최근 30일 동안 5회 미만으로 사용된 이모지를 관리자(이모지 관리 권한 보유자)에게만 보여줍니다.
+
+각 명령어는 서버의 모든 텍스트 채널에서 메시지 내용과 리액션을 합산하여 집계합니다.
