@@ -68,11 +68,17 @@ async def collect_emoji_counts(guild: discord.Guild, since: datetime | None) -> 
             continue
         try:
             async for message in channel.history(limit=None, after=since, oldest_first=True):
+                if message.author.bot:
+                    continue
                 merge_counts(counts, extract_emoji_counts_from_text(message.content))
 
                 for reaction in message.reactions:
                     emoji_key = str(reaction.emoji)
-                    counts[emoji_key] += reaction.count
+                    reaction_total = reaction.count
+                    if reaction.me:
+                        reaction_total -= 1
+                    if reaction_total > 0:
+                        counts[emoji_key] += reaction_total
         except discord.Forbidden:
             logger.warning("채널 %s에 접근할 수 없습니다", channel.name)
         except discord.HTTPException as exc:
