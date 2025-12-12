@@ -43,13 +43,15 @@ def parse_timeframe(label: str) -> timedelta | None:
     return TIMEFRAME_LABELS.get(cleaned)
 
 
-def format_vertical_graph(pairs: list[tuple[str, int]], height: int = 10) -> str:
+def format_vertical_graph_with_legend(
+    pairs: list[tuple[str, int]], height: int = 10
+) -> tuple[str, str]:
     if not pairs:
-        return "(데이터가 없습니다)"
+        return "(데이터가 없습니다)", ""
 
     max_count = max(count for _, count in pairs)
     if max_count == 0:
-        return "(데이터가 없습니다)"
+        return "(데이터가 없습니다)", ""
 
     scaled_heights = [max(1, math.ceil(count / max_count * height)) for _, count in pairs]
     lines: list[str] = []
@@ -59,11 +61,15 @@ def format_vertical_graph(pairs: list[tuple[str, int]], height: int = 10) -> str
             row.append("  █  " if column_height >= level else "     ")
         lines.append("".join(row))
 
-    labels = "".join(f" {name}  " for name, _ in pairs)
+    # 그래프는 고정 폭 번호 라벨을 사용하고, 실제 이모지는 전설에 별도로 표시한다.
+    numeric_labels = "".join(f"  {idx+1:^1}  " for idx in range(len(pairs)))
     counts = "".join(f" {count:^3} " for _, count in pairs)
-    lines.append(labels)
+    lines.append(numeric_labels)
     lines.append(counts)
-    return "\n".join(lines)
+
+    legend_items = [f"{idx+1}: {label}" for idx, (label, _) in enumerate(pairs)]
+    legend = "\n".join(legend_items)
+    return "\n".join(lines), legend
 
 
 def extract_emoji_counts_from_text(content: str) -> Counter[str]:
@@ -155,10 +161,12 @@ async def emoji_leaderboard(
     top_20 = counts.most_common(20)
     labels = await resolve_emojis(client, guild, [name for name, _ in top_20])
     labelled_pairs = list(zip(labels, [count for _, count in top_20]))
-    graph = format_vertical_graph(labelled_pairs)
+    graph, legend = format_vertical_graph_with_legend(labelled_pairs)
 
     title = f"상위 20 이모지 사용량 ({label})"
-    await interaction.followup.send(f"**{title}**\n```\n{graph}\n```")
+    await interaction.followup.send(
+        f"**{title}**\n```\n{graph}\n```\n전설:\n{legend}"
+    )
 
 
 @client.tree.command(name="emoji_unused", description="최근 30일 동안 5회 미만 사용된 커스텀 이모지 목록")
