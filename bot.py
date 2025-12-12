@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import discord
 import emoji
-from discord.ext import commands
+from discord import app_commands
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ TIMEFRAME_LABELS = {
 }
 
 
-class EmojiRankingBot(commands.Bot):
+class EmojiRankingClient(discord.Client):
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
@@ -28,7 +28,11 @@ class EmojiRankingBot(commands.Bot):
         intents.guilds = True
         intents.emojis = True
         intents.members = False
-        super().__init__(command_prefix="!", intents=intents, help_command=None)
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self) -> None:
+        await self.tree.sync()
 
     async def on_ready(self) -> None:
         logger.info("봇이 로그인되었습니다: %s", self.user)
@@ -100,7 +104,7 @@ async def collect_emoji_counts(guild: discord.Guild, since: datetime | None) -> 
     return counts
 
 
-async def resolve_emojis(bot: commands.Bot, guild: discord.Guild, keys: list[str]) -> list[str]:
+async def resolve_emojis(bot: discord.Client, guild: discord.Guild, keys: list[str]) -> list[str]:
     resolved: list[str] = []
     for key in keys:
         partial = discord.PartialEmoji.from_str(key)
@@ -112,66 +116,81 @@ async def resolve_emojis(bot: commands.Bot, guild: discord.Guild, keys: list[str
     return resolved
 
 
-bot = EmojiRankingBot()
+client = EmojiRankingClient()
 
 
-@bot.command(name="이모지랭킹")
-async def emoji_leaderboard(ctx: commands.Context, 기간: str = "전체") -> None:
-    timeframe = parse_timeframe(기간)
-    if 기간 not in TIMEFRAME_LABELS:
-        await ctx.send("사용 가능한 기간 옵션: 1주, 1개월, 3개월, 전체")
-        return
+def _guild_or_error(interaction: discord.Interaction) -> discord.Guild:
+    if not interaction.guild:
+        raise RuntimeError("길드 컨텍스트에서만 사용할 수 있습니다.")
+    return interaction.guild
 
+
+@client.tree.command(name="emoji_rank", description="기간별 상위 20 이모지 사용량을 그래프로 표시")
+@app_commands.describe(기간="1주, 1개월, 3개월, 전체 중 하나 (미선택 시 전체)")
+@app_commands.choices(
+    기간=[
+        app_commands.Choice(name="1주", value="1주"),
+        app_commands.Choice(name="1개월", value="1개월"),
+        app_commands.Choice(name="3개월", value="3개월"),
+        app_commands.Choice(name="전체", value="전체"),
+    ]
+)
+async def emoji_leaderboard(
+    interaction: discord.Interaction, 기간: app_commands.Choice[str] | None = None
+) -> None:
+    label = 기간.value if 기간 else "전체"
+    timeframe = parse_timeframe(label)
     since = None
     if timeframe:
         since = datetime.now(timezone.utc) - timeframe
 
-    await ctx.send("이모지 데이터를 모으는 중입니다... 잠시만 기다려 주세요.")
-    counts = await collect_emoji_counts(ctx.guild, since)  # type: ignore[arg-type]
+    await interaction.response.defer(thinking=True)
+    guild = _guild_or_error(interaction)
+    counts = await collect_emoji_counts(guild, since)
 
     if not counts:
-        await ctx.send("아직 사용된 이모지가 없습니다.")
+        await interaction.followup.send("아직 사용된 이모지가 없습니다.")
         return
 
     top_20 = counts.most_common(20)
-    labels = await resolve_emojis(bot, ctx.guild, [name for name, _ in top_20])  # type: ignore[arg-type]
+    labels = await resolve_emojis(client, guild, [name for name, _ in top_20])
     labelled_pairs = list(zip(labels, [count for _, count in top_20]))
     graph = format_vertical_graph(labelled_pairs)
 
-    title = f"상위 20 이모지 사용량 ({기간})"
-    await ctx.send(f"**{title}**\n```\n{graph}\n```")
+    title = f"상위 20 이모지 사용량 ({label})"
+    await interaction.followup.send(f"**{title}**\n```\n{graph}\n```")
 
 
-@bot.command(name="미사용이모지")
-@commands.has_permissions(manage_emojis=True)
-async def underused_emojis(ctx: commands.Context) -> None:
-    since = datetime.now(timezone.utc) - timedelta(days=30)
-    counts = await collect_emoji_counts(ctx.guild, since)  # type: ignore[arg-type]
-
-    custom_emoji_keys = [str(emoji_obj) for emoji_obj in ctx.guild.emojis]  # type: ignore[arg-type]
-    underused = [key for key in custom_emoji_keys if counts.get(key, 0) < 5]
-    if not underused:
-        await ctx.send("지난 30일 동안 5회 미만으로 사용된 이모지가 없습니다.")
+@client.tree.command(name="emoji_unused", description="최근 30일 동안 5회 미만 사용된 커스텀 이모지 목록")
+async def underused_emojis(interaction: discord.Interaction) -> None:
+    guild = _guild_or_error(interaction)
+    member = interaction.user if isinstance(interaction.user, discord.Member) else None
+    if not member or not member.guild_permissions.manage_emojis_and_stickers:
+        await interaction.response.send_message("이 명령어는 관리자 전용입니다.", ephemeral=True)
         return
 
-    labels = await resolve_emojis(bot, ctx.guild, underused)  # type: ignore[arg-type]
-    await ctx.send("지난 30일 동안 5회 미만으로 사용된 이모지 목록:\n" + " ".join(labels))
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    counts = await collect_emoji_counts(guild, since)
 
+    custom_emoji_keys = [str(emoji_obj) for emoji_obj in guild.emojis]
+    underused = [key for key in custom_emoji_keys if counts.get(key, 0) < 5]
+    if not underused:
+        await interaction.followup.send("지난 30일 동안 5회 미만으로 사용된 이모지가 없습니다.", ephemeral=True)
+        return
 
-@underused_emojis.error
-async def underused_emojis_error(ctx: commands.Context, error: commands.CommandError) -> None:
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("이 명령어는 관리자 전용입니다.")
-    else:
-        await ctx.send("명령어 실행 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.")
-        logger.error("underused_emojis 오류", exc_info=error)
+    labels = await resolve_emojis(client, guild, underused)
+    await interaction.followup.send(
+        "지난 30일 동안 5회 미만으로 사용된 이모지 목록:\n" + " ".join(labels),
+        ephemeral=True,
+    )
 
 
 def main() -> None:
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         raise RuntimeError("DISCORD_TOKEN 환경 변수를 설정해주세요.")
-    bot.run(token)
+    client.run(token)
 
 
 if __name__ == "__main__":
