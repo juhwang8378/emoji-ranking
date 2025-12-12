@@ -1,5 +1,4 @@
 import logging
-import math
 import os
 import re
 from collections import Counter
@@ -41,35 +40,6 @@ class EmojiRankingClient(discord.Client):
 def parse_timeframe(label: str) -> timedelta | None:
     cleaned = label.strip()
     return TIMEFRAME_LABELS.get(cleaned)
-
-
-def format_vertical_graph_with_legend(
-    pairs: list[tuple[str, int]], height: int = 10
-) -> tuple[str, str]:
-    if not pairs:
-        return "(데이터가 없습니다)", ""
-
-    max_count = max(count for _, count in pairs)
-    if max_count == 0:
-        return "(데이터가 없습니다)", ""
-
-    scaled_heights = [max(1, math.ceil(count / max_count * height)) for _, count in pairs]
-    lines: list[str] = []
-    for level in range(height, 0, -1):
-        row = []
-        for column_height in scaled_heights:
-            row.append("  █  " if column_height >= level else "     ")
-        lines.append("".join(row))
-
-    # 그래프는 고정 폭 번호 라벨을 사용하고, 실제 이모지는 전설에 별도로 표시한다.
-    numeric_labels = "".join(f"  {idx+1:^1}  " for idx in range(len(pairs)))
-    counts = "".join(f" {count:^3} " for _, count in pairs)
-    lines.append(numeric_labels)
-    lines.append(counts)
-
-    legend_items = [f"{idx+1}: {label}" for idx, (label, _) in enumerate(pairs)]
-    legend = "\n".join(legend_items)
-    return "\n".join(lines), legend
 
 
 def extract_emoji_counts_from_text(content: str) -> Counter[str]:
@@ -131,7 +101,7 @@ def _guild_or_error(interaction: discord.Interaction) -> discord.Guild:
     return interaction.guild
 
 
-@client.tree.command(name="emoji_rank", description="기간별 상위 20 이모지 사용량을 그래프로 표시")
+@client.tree.command(name="emoji_rank", description="기간별 상위 20 이모지 사용량을 순위로 표시")
 @app_commands.describe(기간="1주, 1개월, 3개월, 전체 중 하나 (미선택 시 전체)")
 @app_commands.choices(
     기간=[
@@ -160,13 +130,11 @@ async def emoji_leaderboard(
 
     top_20 = counts.most_common(20)
     labels = await resolve_emojis(client, guild, [name for name, _ in top_20])
-    labelled_pairs = list(zip(labels, [count for _, count in top_20]))
-    graph, legend = format_vertical_graph_with_legend(labelled_pairs)
+    counts_only = [count for _, count in top_20]
+    lines = [f"{idx + 1}위: {emoji_label} [{count}]" for idx, (emoji_label, count) in enumerate(zip(labels, counts_only))]
 
     title = f"상위 20 이모지 사용량 ({label})"
-    await interaction.followup.send(
-        f"**{title}**\n```\n{graph}\n```\n전설:\n{legend}"
-    )
+    await interaction.followup.send(f"**{title}**\n" + "\n".join(lines))
 
 
 @client.tree.command(name="emoji_unused", description="최근 30일 동안 5회 미만 사용된 커스텀 이모지 목록")
